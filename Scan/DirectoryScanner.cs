@@ -10,12 +10,16 @@ namespace DotNetCoreProject
     class DirectoryScanner {
 
         public string DirectoryToScan {get; private set; }
-
-        public ConcurrentQueue<string> Queue {get; private set;} 
-            = new ConcurrentQueue<string>();
+        private readonly ConcurrentQueue<string> queue  = null;
+        private volatile bool scanCompleted = false;
 
         public DirectoryScanner(string filePath) {
-            this.DirectoryToScan = filePath ?? throw new Exception("Empty file path");
+
+            if(string.IsNullOrWhiteSpace(filePath))
+                throw new ArgumentException($"Argument {nameof(filePath)} is not valid");
+            
+            this.DirectoryToScan = filePath;
+            queue = new ConcurrentQueue<string>();
         }
 
         public void Scan(bool useParallel = true) {
@@ -24,108 +28,105 @@ namespace DotNetCoreProject
             else 
                 RecursiveScan(this.DirectoryToScan);
         }
-        private volatile bool ScanCompleted = false;
 
         private void ParallelScan(string directory) {
-
 
             if(!Directory.Exists(directory)) {
                 Console.WriteLine($"Directory not found: {directory}");
                 return;
             }
 
-            ScanCompleted = false;
-            Queue.Clear();
+            scanCompleted = false;
+            queue.Clear();
 
             // one item in queue so we have not reached end
-            Queue.Enqueue(directory);
-            var countDownEvent = new CountdownEvent(1);
+            queue.Enqueue(directory);
+            var scanCountDownSignal = new CountdownEvent(1);
 
-            var manualResetEventSlim = new ManualResetEventSlim();
+            var itemAvailableSignal = new ManualResetEventSlim();
 
             var endOfScanDetector = Task.Run(() => {
-                countDownEvent.Wait();
-                ScanCompleted = true;
-                manualResetEventSlim.Set();
+                scanCountDownSignal.Wait();
+                // no item remaining to put in the queue 
+                // so signal end of scan
+                scanCompleted = true;
+                itemAvailableSignal.Set();
             });
 
-            var tasks = new List<Task>();
-
-            int totalCount = 1;
+            int totalDirectoryCount = 1;
+            // used to make signal only if certain threshold item is reached in queue
             int divisor = Math.Min(4,Environment.ProcessorCount);
 
-            var factory = new TaskFactory();
+            var options = new ParallelOptions()
+            {
+                MaxDegreeOfParallelism = Environment.ProcessorCount
+            };
 
-            for(int i =0; i < Environment.ProcessorCount; i++) {
-
-                var task = new Task( () => {
+            var parallelLoopResult = Parallel.For(0,Environment.ProcessorCount, 
+                options,
+                (index) => {
                     do 
                     {
                         string dir = null;
-                        var dequeueSuccess = Queue.TryDequeue(out dir);
+                        var dequeueSuccess = queue.TryDequeue(out dir);
 
                         if(dequeueSuccess == false) {
-                            manualResetEventSlim.Wait();
-                            Console.WriteLine(countDownEvent.CurrentCount + ":" + Thread.CurrentThread.ManagedThreadId + "Found nothing" + DateTime.Now);
-                        } else {
+                            // no item in queue so wait for 
+                            // item signal
+                            itemAvailableSignal.Wait();
+                        } 
+                        else {
 
                             try 
                             {
                                 var name = new DirectoryInfo(dir).Name;
                                 Console.WriteLine(Thread.CurrentThread.ManagedThreadId 
-                                    + "->" + name);
+                                    + " -> " + name);
 
                                 var subDirectories = Directory.GetDirectories(dir);
                                 var count = 0;
 
                                 foreach(var subDirectory in subDirectories) {
                                     count++;
-                                    manualResetEventSlim.Reset();
-                                    Queue.Enqueue(subDirectory);
-                                    countDownEvent.AddCount(1);
+                                    itemAvailableSignal.Reset();
+                                    queue.Enqueue(subDirectory);
+                                    scanCountDownSignal.AddCount(1);
 
                                     if (count%divisor == 0) {
-                                        manualResetEventSlim.Set();
+                                        itemAvailableSignal.Set();
                                     }
                                 }
-
-                                Interlocked.Add(ref totalCount,count);
+                                // count total directories
+                                Interlocked.Add(ref totalDirectoryCount,count);
                             }
                             finally {
-                                manualResetEventSlim.Reset();
-                                countDownEvent.Signal();
+                                itemAvailableSignal.Reset();
+                                scanCountDownSignal.Signal();
                             }
                         } 
-                    } while(!ScanCompleted);
-                });
-                
-                task.Start();
-                tasks.Add(task);
-            }
+                    } while(!scanCompleted);
+                }
+            );
 
             endOfScanDetector.Wait();
-
-            foreach(var task in tasks)
-                task.Wait();
-
-            Console.WriteLine("End of scan: " + totalCount);
+            Console.WriteLine("End of scan -> Total Dir Count: " + totalDirectoryCount);
         }
 
         private void RecursiveScan(string directory) {
 
             if(!Directory.Exists(directory)) {
-                            Console.WriteLine($"Directory not found: {directory}");
-                            return;
+                Console.WriteLine($"Directory not found: {directory}");
+                return;
             }
 
-            ScanCompleted = false;
-            Queue.Clear();
-            Queue.Enqueue(directory);
+            scanCompleted = false;
+            queue.Clear();
+            queue.Enqueue(directory);
 
-            int totalCount = 1;
+            int totalDirectoriesCount = 1;
 
             string dir;
-            while(Queue.TryDequeue(out dir)) {
+            while(queue.TryDequeue(out dir)) {
 
                 var name = new DirectoryInfo(dir).Name;
                 
@@ -135,14 +136,13 @@ namespace DotNetCoreProject
                 var subDirectories = System.IO.Directory.GetDirectories(dir);
 
                 foreach(var subDirectory in subDirectories) {
-                    totalCount++;
-                    Queue.Enqueue(subDirectory);
+                    totalDirectoriesCount++;
+                    queue.Enqueue(subDirectory);
                 }
             }
 
-            ScanCompleted = true;
-
-            Console.WriteLine("End of scan: " + totalCount);
+            scanCompleted = true;
+            Console.WriteLine("End of scan -> Total Dir Count: " + totalDirectoriesCount);
         }
     }
 }
