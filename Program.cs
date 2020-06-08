@@ -8,8 +8,8 @@ namespace DotNetCoreProject
         {
             var path = "/home/santosh";
             var scanner = new DirectoryScanner(path);
-            scanner.Scan(false);
-            scanner.Scan(true);
+            scanner.Scan(useParallel: true);
+            scanner.Scan(useParallel: false);
 
             Console.WriteLine("Press any key..");
             Console.ReadKey();

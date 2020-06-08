@@ -80,10 +80,13 @@ namespace DotNetCoreProject
                             try 
                             {
                                 var name = new DirectoryInfo(dir).Name;
-                                Console.WriteLine(Thread.CurrentThread.ManagedThreadId 
-                                    + " -> " + name);
+                                // Console.WriteLine(Thread.CurrentThread.ManagedThreadId 
+                                //     + " -> " + name);
 
-                                var subDirectories = Directory.GetDirectories(dir);
+                                // more efficient that Directory.GetDirectories 
+                                // since collection can be enumerated 
+                                // before whole collection is returned.
+                                var subDirectories = Directory.EnumerateDirectories(dir);
                                 var count = 0;
 
                                 foreach(var subDirectory in subDirectories) {
@@ -130,8 +133,8 @@ namespace DotNetCoreProject
 
                 var name = new DirectoryInfo(dir).Name;
                 
-                Console.WriteLine(Thread.CurrentThread.ManagedThreadId 
-                    + "->" + name);
+                // Console.WriteLine(Thread.CurrentThread.ManagedThreadId 
+                //     + "->" + name);
 
                 var subDirectories = System.IO.Directory.GetDirectories(dir);
 
